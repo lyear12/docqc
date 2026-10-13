@@ -206,6 +206,60 @@ def backends() -> None:
     )
 
 
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option("--host", help="监听地址。")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", "-p", help="监听端口。")] = 8765,
+    reload: Annotated[
+        bool, typer.Option("--reload", help="代码变更时自动重载（开发用）。")
+    ] = False,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option("--work-dir", help="上传文件存放目录。"),
+    ] = None,
+) -> None:
+    """启动 Web 界面。
+
+    默认只监听本机回环地址：这是本地工具，绑定到 0.0.0.0 会让同网络上的
+    任何人访问你上传的文档。
+
+    Args:
+        host: Interface to bind.
+        port: Port to bind.
+        reload: Restart on source changes (development).
+        work_dir: Where uploads are written.
+    """
+    try:
+        import uvicorn
+    except ImportError as exc:  # pragma: no cover - depends on install extras
+        error_console.print(
+            '[red]缺少 Web 依赖。[/red]请先安装：\n  [bold]pip install -e ".[web]"[/bold]'
+        )
+        raise typer.Exit(code=EXIT_USAGE) from exc
+
+    from .web.app import create_app
+
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        console.print(
+            f"[yellow]警告：[/yellow]绑定到 {host} 会让同网络的其他机器访问此服务，"
+            "而它能读取你上传的任何文档。"
+        )
+
+    console.print(
+        Panel(
+            f"[bold]docqc[/bold] {__version__}\n"
+            f"界面地址：[bold]http://{host}:{port}[/bold]\n"
+            f"接口文档：[bold]http://{host}:{port}/docs[/bold]\n"
+            "[dim]按 Ctrl+C 停止[/dim]",
+            title="Web 服务",
+            border_style="blue",
+        )
+    )
+
+    application = create_app(work_dir=work_dir)
+    uvicorn.run(application, host=host, port=port, reload=reload, log_level="info")
+
+
 # -- rendering ---------------------------------------------------------------
 
 

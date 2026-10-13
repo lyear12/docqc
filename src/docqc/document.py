@@ -244,6 +244,38 @@ class Document:
             self._docx = docx.Document(str(self.path))
         return self._docx
 
+    def close(self) -> None:
+        """Release the underlying package handle.
+
+        ``python-docx`` opens the ``.docx`` as a zip and keeps it open for the
+        lifetime of the ``Document``. On Windows that handle blocks deletion, so
+        a web job whose upload is deleted while its report still references the
+        document fails with ``WinError 32``. Dropping the reference is enough —
+        ``zipfile.ZipFile`` closes on collection — and doing it deterministically
+        here is what makes "delete the upload after checking it" reliable.
+
+        Safe to call more than once, and safe when nothing was parsed.
+        """
+        self._docx = None
+        self._paragraphs = None
+        self._tables = None
+
+    def __enter__(self) -> Document:
+        """Context-manager entry.
+
+        Returns:
+            This document.
+        """
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Release the handle on context exit.
+
+        Args:
+            *exc_info: Unused exception triple.
+        """
+        self.close()
+
     @property
     def paragraphs(self) -> list[Paragraph]:
         """Every body paragraph, in document order."""

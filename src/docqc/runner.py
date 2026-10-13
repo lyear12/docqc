@@ -112,6 +112,11 @@ def check(
 ) -> Report:
     """Load, check, and report in one call — the whole pipeline.
 
+    The document handle is released before returning. ``python-docx`` keeps the
+    ``.docx`` open as a zip for the object's lifetime, and on Windows that blocks
+    deleting or moving the file — which a web job does as soon as the run ends.
+    Everything the report needs has been read by then, so closing is free.
+
     Args:
         path: Document to inspect.
         names: Restrict to these checkers.
@@ -120,9 +125,10 @@ def check(
     Returns:
         The finished report.
     """
-    document = Document(path)
-    results = run_checks(document, names=names, progress=progress)
-    return build_report(document, results)
+    with Document(path) as document:
+        results = run_checks(document, names=names, progress=progress)
+        # `info()` counts paragraphs and tables, so it must run before release.
+        return build_report(document, results)
 
 
 def top_findings(report: Report, limit: int = 10) -> list[Finding]:

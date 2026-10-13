@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .document import RenderResult
 
@@ -113,6 +114,64 @@ def detect_backends() -> list[Backend]:
     ]
 
 
+def _load_pymupdf() -> Any | None:
+    """Import PyMuPDF, tolerating both module names.
+
+    ``pymupdf`` is the current name; ``fitz`` is the historical one and still
+    works in 1.28. Importing ``fitz`` prints a deprecation warning, so the new
+    name is tried first.
+
+    The return type is ``Any`` deliberately: PyMuPDF's own annotations are
+    incomplete, and mypy reports its constructors as untyped calls. Confining
+    that to one boundary function keeps the rest of the module strictly typed
+    instead of spreading ``type: ignore`` through the rasterization loop.
+
+    Returns:
+        The module, or ``None`` when PyMuPDF is not installed.
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf  # type: ignore[no-redef]
+        except ImportError:
+            return None
+    return pymupdf
+
+
+def _rasterize_with_pymupdf(
+    pdf: Path, out_dir: Path, dpi: int
+) -> tuple[list[Path], list[tuple[int, int]]]:
+    """Rasterize a PDF using PyMuPDF.
+
+    Args:
+        pdf: Source PDF.
+        out_dir: Directory for the page images.
+        dpi: Resolution.
+
+    Returns:
+        ``(image_paths, sizes)`` in page order.
+
+    Raises:
+        RenderUnavailableError: When PyMuPDF is not installed.
+    """
+    module = _load_pymupdf()
+    if module is None:
+        raise RenderUnavailableError("PyMuPDF is not installed")
+
+    images: list[Path] = []
+    sizes: list[tuple[int, int]] = []
+    zoom = dpi / 72.0
+    with module.open(pdf) as doc:
+        for number, page in enumerate(doc, start=1):
+            pixmap = page.get_pixmap(matrix=module.Matrix(zoom, zoom))
+            target = out_dir / f"page-{number:04d}.png"
+            pixmap.save(str(target))
+            images.append(target)
+            sizes.append((int(pixmap.width), int(pixmap.height)))
+    return images, sizes
+
+
 def _pdf_to_png(pdf: Path, out_dir: Path, dpi: int) -> tuple[list[Path], list[tuple[int, int]]]:
     """Rasterize a PDF to one PNG per page.
 
@@ -130,22 +189,8 @@ def _pdf_to_png(pdf: Path, out_dir: Path, dpi: int) -> tuple[list[Path], list[tu
     Raises:
         RenderUnavailableError: If neither rasterizer is usable.
     """
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        pass
-    else:
-        images: list[Path] = []
-        sizes: list[tuple[int, int]] = []
-        zoom = dpi / 72.0
-        with fitz.open(pdf) as doc:
-            for number, page in enumerate(doc, start=1):
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-                target = out_dir / f"page-{number:04d}.png"
-                pixmap.save(str(target))
-                images.append(target)
-                sizes.append((pixmap.width, pixmap.height))
-        return images, sizes
+    if _load_pymupdf() is not None:
+        return _rasterize_with_pymupdf(pdf, out_dir, dpi)
 
     pdftoppm = shutil.which("pdftoppm") or shutil.which("pdftoppm.exe")
     if pdftoppm is None:

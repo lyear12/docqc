@@ -44,7 +44,12 @@ docqc check 论文.docx --json > report.json
 
 # 看看本机有哪些渲染后端
 docqc backends
+
+# 启动 Web 界面
+docqc serve
 ```
+
+Web 界面默认在 <http://127.0.0.1:8765>，接口文档在 `/docs`。
 
 ## 检查器
 
@@ -52,9 +57,39 @@ docqc backends
 |---|---|---|
 | `layout` | 空白页、内容溢出页边、页面近空 | ✅ 是 |
 | `formula` | 裸 LaTeX、`$` 不配对、公式编号跳号/重复 | ❌ 否 |
-| `structure` | 标题样式、大纲级别、层级跳级、`w:pPr` 顺序、包完整性 | ❌ 否 |
+| `structure` | 标题样式、大纲级别、层级跳级、假标题、`w:pPr` 顺序、包完整性 | ❌ 否 |
 
 三个检查器相互独立。`layout` 需要 Word 或 LibreOffice；另两个只读 XML，**任何机器都能跑**。
+
+## Web 界面
+
+```bash
+docqc serve                 # http://127.0.0.1:8765
+docqc serve --port 9000
+```
+
+上传一个 `.docx`，浏览器里实时看到每个检查器的进度和最终报告。
+
+这是**本地工具**：默认只监听回环地址。绑定到 `0.0.0.0` 会让同网络上的
+任何人访问你上传的文档，所以 CLI 会先给出警告。
+
+### API
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/health` | 存活探测 |
+| `GET` | `/api/checkers` | 已注册的检查器 |
+| `GET` | `/api/backends` | 本机可用的渲染后端 |
+| `POST` | `/api/jobs` | 上传文档，返回 `job_id` |
+| `GET` | `/api/jobs/{id}` | 轮询任务状态 |
+| `GET` | `/api/jobs/{id}/events` | **SSE** 流式进度 |
+| `DELETE` | `/api/jobs/{id}` | 删除任务及其上传文件 |
+
+为什么用「上传 → 拿 id → 订阅事件」而不是「上传 → 等结果」：一次 `layout`
+检查要驱动 Word 渲染每一页，耗时以秒到分钟计。阻塞式请求会在浏览器里超时，
+而且用户看不到任何反馈。SSE 而不是 WebSocket，因为进度是**单向**的
+server→client，SSE 自带断线重连，客户端代码更少。
+
 
 ## 输出示例
 
@@ -85,16 +120,22 @@ docqc backends
 src/docqc/
 ├── models.py      词汇表：Finding / CheckResult / Report（无依赖）
 ├── ooxml.py       原生 WordprocessingML 助手（无依赖）
+├── styles.py      样式继承解析（basedOn 级联）
 ├── document.py    格式无关的文档视图
 ├── render.py      docx → PDF → PNG
 ├── registry.py    检查器插件协议
 ├── checkers/      每个检查器一个模块
 ├── runner.py      运行检查器、组装报告
-└── cli.py         命令行入口
+├── cli.py         命令行入口
+└── web/           FastAPI 应用
+    ├── schemas.py 传输层契约
+    ├── jobs.py    任务存储 + 后台执行 + 事件流
+    └── app.py     路由
 ```
 
 **分层原则**：每一层都能独立理解和测试。`models` 和 `ooxml` 没有任何内部依赖；
-`checkers` 只依赖 `document` 和 `models`，不碰渲染。
+`checkers` 只依赖 `document` 和 `models`，不碰渲染；`web` 不包含任何检查逻辑，
+只做传输——所以**命令行和网页对同一份文档的结论必然一致**。
 
 ### 加一个检查器
 
@@ -127,7 +168,7 @@ class MyChecker:
         )
 ```
 
-然后在 `checkers/__init__.py` 里 import 一次即可。
+然后在 `checkers/__init__.py` 里 import 一次即可。CLI 和 Web 都会自动带上它。
 
 ## 环境要求
 
