@@ -1,0 +1,36 @@
+/**
+ * Global reset. Everything else lives in App.css.
+ *
+ * Kept deliberately small: a global stylesheet that grows into a second design
+ * system is how a two-file project becomes unmaintainable. The only job here is
+ * to normalise the box model and let the theme colours from App.css apply to the
+ * document root.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Respect a user's reduced-motion preference globally; individual components
+   only add to this rather than re-deciding. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

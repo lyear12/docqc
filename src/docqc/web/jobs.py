@@ -223,6 +223,13 @@ class JobStore:
             )
 
         job.report = report.model_dump(mode="json")
+        # The report names the file by its stored path, which is derived from
+        # the job id so an uploaded name cannot escape the work directory. That
+        # makes the report say `372c016522ce447e.docx`, which the user cannot
+        # match to anything. Restore the name they actually chose — the path is
+        # still shown for traceability, just corrected for display.
+        job.report["document"]["name"] = job.filename
+        job.report["document"]["path"] = str(job.path)
         job.state = STATE_DONE
         self._emit(
             job,

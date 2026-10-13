@@ -209,22 +209,40 @@ class LayoutChecker:
                 continue
 
             if ink_ratio < SPARSE_INK_RATIO:
-                findings.append(
-                    Finding(
-                        checker=self.name,
-                        code="SPARSE_PAGE",
-                        severity=Severity.WARNING,
-                        message=f"第 {number} 页内容很少（墨迹占比 {ink_ratio:.2%}），"
-                        "可能是分页位置不当。",
-                        location=Location(page=number),
-                        evidence={
-                            "ink_ratio": round(ink_ratio, 6),
-                            "threshold": SPARSE_INK_RATIO,
-                            "image": image_path.name,
-                        },
-                        hint="确认该页是否为章节首页或图表页；否则调整分页。",
+                # A short document is not a paginated one. Reporting a sparse
+                # *only* page is the false positive that prompted this guard:
+                # a two-paragraph fixture was told its "page break" was wrong.
+                # Sparse pages are only interesting when there is another page
+                # for the content to have flowed onto.
+                if len(page_images) == 1:
+                    findings.append(
+                        Finding(
+                            checker=self.name,
+                            code="SHORT_DOCUMENT",
+                            severity=Severity.INFO,
+                            message=f"文档只有 1 页且内容较少（墨迹占比 {ink_ratio:.2%}）。",
+                            location=Location(page=number),
+                            evidence={"ink_ratio": round(ink_ratio, 6), "pages": 1},
+                        )
                     )
-                )
+                else:
+                    findings.append(
+                        Finding(
+                            checker=self.name,
+                            code="SPARSE_PAGE",
+                            severity=Severity.WARNING,
+                            message=f"第 {number} 页内容很少（墨迹占比 {ink_ratio:.2%}），"
+                            "可能是分页位置不当。",
+                            location=Location(page=number),
+                            evidence={
+                                "ink_ratio": round(ink_ratio, 6),
+                                "threshold": SPARSE_INK_RATIO,
+                                "pages": len(page_images),
+                                "image": image_path.name,
+                            },
+                            hint="确认该页是否为章节首页或图表页；否则调整分页。",
+                        )
+                    )
 
             overflow = self._check_margins(ink, number, image_path)
             if overflow is not None:

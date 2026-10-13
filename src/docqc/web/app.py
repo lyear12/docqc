@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..models import Status
@@ -48,7 +49,7 @@ ALLOWED_SUFFIXES = frozenset({".docx"})
 STREAM_TIMEOUT_SECONDS = 20.0
 
 
-def create_app(*, work_dir: Path | None = None) -> FastAPI:
+def create_app(*, work_dir: Path | None = None, static_dir: Path | None = None) -> FastAPI:
     """Build the application.
 
     A factory rather than a module-level ``app`` so tests can point the store at
@@ -57,6 +58,10 @@ def create_app(*, work_dir: Path | None = None) -> FastAPI:
     Args:
         work_dir: Where uploads are written. Defaults to ``.docqc/uploads``
             under the current working directory.
+        static_dir: Built frontend assets to serve at ``/``. Defaults to
+            ``frontend/dist`` next to the package when it exists, so a source
+            checkout works without configuration. When absent, only the API is
+            served — development runs the UI through Vite instead.
 
     Returns:
         The configured application.
@@ -336,6 +341,19 @@ def create_app(*, work_dir: Path | None = None) -> FastAPI:
 
         return {"status": removed, "job_id": job_id}
 
+    # -- static frontend --------------------------------------------------
+
+    # Mounted last so the API routes above always win. A single-page app needs
+    # every non-API path to fall through to index.html rather than 404, which is
+    # what `html=True` does — without it a browser refresh on any client-side
+    # route fails. `docqc serve` is then one command for the whole product.
+    assets = static_dir if static_dir is not None else default_static_dir()
+    if assets is not None and (assets / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=assets, html=True), name="ui")
+        app.state.static_dir = assets
+    else:
+        app.state.static_dir = None
+
     return app
 
 
@@ -367,4 +385,34 @@ def summarize_for_ui(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["ALLOWED_SUFFIXES", "MAX_UPLOAD_BYTES", "STREAM_TIMEOUT_SECONDS", "create_app"]
+def default_static_dir() -> Path | None:
+    """Locate the built frontend, if it exists.
+
+    Checked in two places because docqc runs both from a source checkout and
+    from an installed wheel:
+
+    * next to the package (``src/docqc/web/app.py`` -> ``<root>/frontend/dist``)
+    * one level above the package (installed layout)
+
+    Returns:
+        The directory holding ``index.html``, or ``None`` when the frontend has
+        not been built. Returning ``None`` rather than raising keeps the API
+        usable on its own, which is what CI needs.
+    """
+    candidates = [
+        Path(__file__).resolve().parents[3] / "frontend" / "dist",
+        Path(__file__).resolve().parents[2] / "frontend" / "dist",
+    ]
+    for candidate in candidates:
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+__all__ = [
+    "ALLOWED_SUFFIXES",
+    "MAX_UPLOAD_BYTES",
+    "STREAM_TIMEOUT_SECONDS",
+    "create_app",
+    "default_static_dir",
+]
