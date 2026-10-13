@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "docqc"
+version = "0.1.0"
+description = "Document quality checker for academic deliverables: layout, formulas, structure."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "lyear12", email = "3188778670@qq.com" }]
+keywords = ["docx", "quality-assurance", "academic", "layout-check", "pdf", "thesis"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Office/Business :: Office Suites",
+  "Typing :: Typed",
+]
+
+dependencies = [
+  "python-docx>=1.2.0",
+  "pypdf>=6.0.0",
+  "Pillow>=12.0.0",
+  "typer>=0.26.0",
+  "rich>=13.0.0",
+  "pydantic>=2.13.0",
+]
+
+[project.optional-dependencies]
+# Rendering extras: converting docx -> pdf -> png for the layout checker.
+# Kept optional because they pull in heavier wheels and are only needed when
+# the render step actually runs.
+render = ["PyMuPDF>=1.28.0", "opencv-python>=5.0.0", "numpy>=2.0.0"]
+web = ["fastapi>=0.141.0", "uvicorn>=0.52.0", "python-multipart>=0.0.20"]
+dev = [
+  "pytest>=9.0.0",
+  "pytest-cov>=6.0.0",
+  "ruff>=0.14.0",
+  "mypy>=1.18.0",
+]
+all = ["docqc[render,web,dev]"]
+
+[project.scripts]
+docqc = "docqc.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/lyear12/docqc"
+Issues = "https://github.com/lyear12/docqc/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/docqc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# `tools/` holds one-off investigation scripts kept for their evidence value;
+# they are not shipped and not worth linting to the same bar as `src/`.
+extend-exclude = ["tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PTH"]
+
+[tool.ruff.lint.per-file-ignores]
+# Assertions are the point of a test file.
+"tests/*" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+# python-docx and win32com ship no type information; silence the missing-stub
+# noise rather than sprinkling `# type: ignore` through the checkers.
+[[tool.mypy.overrides]]
+module = ["docx.*", "win32com.*", "fitz.*", "pypdf.*"]
+ignore_missing_imports = true
