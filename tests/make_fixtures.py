@@ -72,14 +72,20 @@ def equation_gap(path: Path) -> Path:
 def heading_without_outline(path: Path) -> Path:
     """A "heading" that is only bold text — no style, no outline level.
 
+    The fake heading is placed *after* the title-block window (the first three
+    paragraphs are exempt as cover matter), so it is reported.
+
     Built at the XML level because ``add_heading`` would add the very style the
     fixture is meant to lack.
     """
     document = _base(path)
+    document.add_paragraph("正文第一段，用来把假标题推出标题块豁免范围。")
+    document.add_paragraph("正文第二段。")
     para = document.add_paragraph()
     run = para.add_run("看起来像标题的一行")
     run.bold = True
     run.font.size = Pt(16)
+    document.add_paragraph("假标题之后的正文。")
     document.save(path)
     return path
 

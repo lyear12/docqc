@@ -24,6 +24,8 @@ a later checker rather than being guessed at from the XML.
 
 from __future__ import annotations
 
+import re
+
 from ..document import Document, Paragraph
 from ..models import CheckResult, Finding, Location, Severity, Status
 from ..ooxml import package_parts, ppr_order_violations
@@ -41,6 +43,56 @@ _HEADING_MARKERS = ("heading", "标题", "标题 ", "heading ")
 
 #: Style names that legitimately contain a heading-like word without being one.
 _HEADING_FALSE_FRIENDS = ("toc", "目录", "caption", "题注")
+
+#: Caption prefixes that make a bold-and-centred short line legitimate.
+#:
+#: A table or figure caption is *supposed* to be bold, centred, and short — the
+#: exact shape a fake heading has. Without this guard the checker reported 94
+#: warnings on a report where 8 of them were ordinary captions, which is the
+#: false-positive failure mode the tool is meant to avoid.
+_CAPTION_PREFIXES = ("表", "图", "table", "figure", "fig.", "tab.")
+
+#: Numbering that must follow a caption prefix for it to count, e.g. ``1-1``,
+#: ``1.2``, ``3``. A paragraph merely starting with 表/图 is not a caption.
+_CAPTION_NUMBER = re.compile(r"^[表图]\s*\d+(?:[-–—.]\d+)*\s|^(?:table|figure|fig\.?|tab\.?)\s*\d+")
+
+#: Front-matter headings that are conventionally styled directly.
+#:
+#: 「摘　要」/「目　录」/「参考文献」/「致　谢」 are real document-level headings
+#: that authors routinely format by hand rather than by style. They are not
+#: defects in the sense this checker means, and flagging them adds noise.
+#:
+#: The comparison strips the ideographic space (U+3000) that Chinese documents
+#: insert between the two characters of a two-character heading.
+_FRONT_MATTER = (
+    "摘要",
+    "目录",
+    "参考文献",
+    "致谢",
+    "附录",
+    "ABSTRACT",
+    "CONTENTS",
+    "REFERENCES",
+    "ACKNOWLEDG",
+)
+#: Uppercased once so ``_is_front_matter`` compares like with like.
+_FRONT_MATTER_UPPER = tuple(prefix.upper() for prefix in _FRONT_MATTER)
+
+#: Paragraph index below which a bold short line is taken to be a title block.
+#:
+#: A report's title and subtitle sit before the body and are conventionally
+#: formatted directly; there is no "Title" style in most Chinese templates.
+#: Kept deliberately tight (three paragraphs) because the exemption is the one
+#: place this checker deliberately stays silent, and a wide window would swallow
+#: real findings near the top of a document.
+_TITLE_BLOCK_PARAGRAPHS = 3
+
+#: Numbered-heading pattern used to raise confidence for a body line, e.g.
+#: ``1.1``, ``第二章``, ``3.4.1``. A bold numbered line that is *not* a heading
+#: style is almost certainly a real defect, not a formatting quirk.
+_NUMBERED_HEADING = re.compile(
+    r"^(?:第[一二三四五六七八九十百\d]+[章节篇部分]|\d+(?:\.\d+)*[\s、.．])"
+)
 
 
 def _looks_like_heading(style_name: str | None) -> bool:
@@ -403,6 +455,12 @@ class StructureChecker:
             # look like; 60 characters covers the longest real heading seen.
             if not text or len(text) > 60:
                 continue
+            # Captions are bold, centred, and short by design. Reporting them
+            # would bury the real findings under noise.
+            if _CAPTION_NUMBER.match(text):
+                continue
+            if _is_front_matter(text):
+                continue
             if para.style_name_id not in (None, "Normal", "BodyText", "正文"):
                 continue
             if _looks_like_heading(para.style_name) or _looks_like_heading(para.style_name_id):
@@ -426,15 +484,37 @@ class StructureChecker:
             if not (enlarged or centred):
                 continue
 
+            # A report's title block sits at the top and is conventionally
+            # formatted by hand; exempting it avoids flagging the cover page.
+            in_title_block = para.index < _TITLE_BLOCK_PARAGRAPHS
+            numbered = bool(_NUMBERED_HEADING.match(text))
+
+            if in_title_block and not numbered:
+                continue
+
+            # A numbered line that looks like a heading but carries no heading
+            # style is the highest-confidence case: the author clearly intended
+            # a section, and Word will not put it in the TOC.
+            severity = Severity.WARNING if numbered else Severity.INFO
+
             findings.append(
                 Finding(
                     checker=self.name,
-                    code="SUSPECTED_FAKE_HEADING",
-                    severity=Severity.WARNING,
-                    message="这一行看起来是标题（加粗"
-                    + ("、字号偏大" if enlarged else "")
-                    + ("、居中" if centred else "")
-                    + "），但没有用标题样式，目录里不会出现。",
+                    code=(
+                        "NUMBERED_HEADING_WITHOUT_STYLE"
+                        if numbered
+                        else "SUSPECTED_FAKE_HEADING"
+                    ),
+                    severity=severity,
+                    message=(
+                        f"编号行「{text[:30]}」看起来是章节标题，但没有用标题样式，"
+                        "目录里不会有这一条。"
+                        if numbered
+                        else "这一行看起来是标题（加粗"
+                        + ("、字号偏大" if enlarged else "")
+                        + ("、居中" if centred else "")
+                        + "），但没有用标题样式。"
+                    ),
                     location=Location(paragraph=para.index, text=text),
                     evidence={
                         "style": para.style_name or "(无样式)",
@@ -442,6 +522,7 @@ class StructureChecker:
                         "max_font_pt": max(sizes) if sizes else None,
                         "centred": centred,
                         "length": len(text),
+                        "numbered": numbered,
                     },
                     hint="选中这一行，套用「标题 1 / 标题 2」样式。",
                 )
@@ -484,6 +565,25 @@ class StructureChecker:
                     )
                 )
         return findings
+
+
+def _is_front_matter(text: str) -> bool:
+    """Whether a line is a conventional front-matter heading.
+
+    Strips the ideographic space (U+3000) and ordinary whitespace before
+    comparing, because Chinese documents space two-character headings as
+    「摘　要」 while the canonical form is 「摘要」.
+
+    Args:
+        text: Paragraph text.
+
+    Returns:
+        True for 摘要/目录/参考文献/致谢/附录 and their English equivalents.
+    """
+    normalized = re.sub(r"[\s\u3000]+", "", text).upper()
+    if not normalized or len(normalized) > 24:
+        return False
+    return any(normalized.startswith(prefix) for prefix in _FRONT_MATTER_UPPER)
 
 
 def _is_centred(paragraph: object) -> bool:

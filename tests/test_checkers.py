@@ -82,9 +82,84 @@ def test_equation_number_gap_is_a_warning(fixtures: dict[str, Path]) -> None:
 
 
 def test_fake_heading_is_detected(fixtures: dict[str, Path]) -> None:
-    """Bold-and-larger text that is not a heading style must be reported."""
+    """Bold, enlarged, non-heading-styled text must be reported.
+
+    The fixture line is unnumbered, so it lands at INFO severity — a bold line
+    with no numbering might be a design choice. A *numbered* line is the
+    higher-confidence case and is covered separately.
+    """
     report = check(fixtures["heading_without_outline"], names=STRUCTURE)
-    assert "SUSPECTED_FAKE_HEADING" in codes(report, "warning")
+    assert "SUSPECTED_FAKE_HEADING" in codes(report, "info")
+
+
+def test_numbered_heading_without_style_is_a_warning(tmp_path: Path) -> None:
+    """A numbered body line formatted as a heading is a real defect.
+
+    Numbering signals intent: the author meant a section, so Word's TOC will be
+    missing an entry. That raises it above the unnumbered case.
+    """
+    import docx
+    from docx.shared import Pt
+
+    doc = docx.Document()
+    doc.add_paragraph("正常正文。")
+    para = doc.add_paragraph()
+    run_ = para.add_run("3.1 数据来源说明")
+    run_.bold = True
+    run_.font.size = Pt(14)
+    path = tmp_path / "numbered_heading.docx"
+    doc.save(path)
+
+    report = check(path, names=STRUCTURE)
+    assert "NUMBERED_HEADING_WITHOUT_STYLE" in codes(report, "warning")
+
+
+def test_caption_is_not_a_fake_heading(tmp_path: Path) -> None:
+    """Table and figure captions are bold and centred by design.
+
+    Without this exemption the checker produced 94 warnings on the user's
+    report, several of them ordinary captions — the false-positive failure mode
+    the tool exists to avoid.
+    """
+    import docx
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+
+    doc = docx.Document()
+    doc.add_heading("一级标题", level=1)
+    doc.add_paragraph("正文。")
+    caption = doc.add_paragraph()
+    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_ = caption.add_run("表 1-1 五维治理效能评估框架")
+    run_.bold = True
+    run_.font.size = Pt(10.5)
+    path = tmp_path / "caption.docx"
+    doc.save(path)
+
+    report = check(path, names=STRUCTURE)
+    assert "SUSPECTED_FAKE_HEADING" not in codes(report)
+    assert "NUMBERED_HEADING_WITHOUT_STYLE" not in codes(report)
+
+
+def test_title_block_is_not_a_fake_heading(tmp_path: Path) -> None:
+    """A cover title is formatted directly and must not be reported."""
+    import docx
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+
+    doc = docx.Document()
+    para = doc.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_ = para.add_run("低空产业治理效能评估")
+    run_.bold = True
+    run_.font.size = Pt(26)
+    doc.add_heading("第一章 场景理解", level=1)
+    doc.add_paragraph("正文。")
+    path = tmp_path / "title_block.docx"
+    doc.save(path)
+
+    report = check(path, names=STRUCTURE)
+    assert "SUSPECTED_FAKE_HEADING" not in codes(report)
 
 
 def test_document_without_headings_is_reported(fixtures: dict[str, Path]) -> None:
