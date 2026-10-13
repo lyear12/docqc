@@ -1,0 +1,26 @@
+# Normalize line endings so the same commit checks out identically on Windows
+# and Linux. Without this, Git's autocrlf rewrites every text file on checkout
+# and CI diffs the whole tree.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF: cmd.exe and some shells mis-parse LF there.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary fixtures must not be touched at all — rewriting them corrupts the file.
+*.docx binary
+*.doc binary
+*.png binary
+*.pdf binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.xlsx binary
+*.pptx binary
+
+# Generated artefacts are diffed by tooling, not by eye.
+*.lock text eol=lf
